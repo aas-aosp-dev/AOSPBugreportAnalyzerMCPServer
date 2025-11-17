@@ -9,10 +9,12 @@ const DEFAULT_REPO = process.env.GITHUB_DEFAULT_REPO ?? "AOSPBugreportAnalyzer";
 const USER_AGENT = "AOSPBugreportAnalyzerMCPServer";
 
 const server = new McpServer({
-  name: "aospbugreportanalyzer-github",
+  name: "aospbugreportanalyzer-mcp",
   version: "0.1.0",
   description: "MCP server that exposes minimal GitHub tools for AOSPBugreportAnalyzer"
 });
+
+
 
 function requireToken() {
   if (!GITHUB_TOKEN) {
@@ -49,6 +51,11 @@ async function callGithub(url: string, headers: Record<string, string>) {
   }
 }
 
+function registerTools() {
+  console.error(
+    "[MCP-SERVER] Registering tools: github.list_pull_requests, github.get_pr_diff"
+  );
+
 server.registerTool(
   "github.list_pull_requests",
   {
@@ -69,28 +76,51 @@ server.registerTool(
       )
     })
   },
-  async (input) => {
-    const { owner, repo, state } = input;
-    const response = await callGithub(
-      `https://api.github.com/repos/${owner}/${repo}/pulls?state=${state}`,
-      { Accept: "application/vnd.github+json" }
-    );
-    const data = (await response.body.json()) as Array<{
-      number: number;
-      title: string;
-      html_url: string;
-      state: string;
-    }>;
-    return {
-      pullRequests: data.map((pr) => ({
+  async (input, { requestId }) => {
+    console.error("[MCP-SERVER] Tool github.list_pull_requests called:", {
+      requestId,
+      args: input
+    });
+
+    try {
+      const { owner, repo, state } = input;
+      const response = await callGithub(
+        `https://api.github.com/repos/${owner}/${repo}/pulls?state=${state}`,
+        { Accept: "application/vnd.github+json" }
+      );
+
+      const data = (await response.body.json()) as Array<{
+        number: number;
+        title: string;
+        html_url: string;
+        state: string;
+      }>;
+
+      const simplified = data.map((pr) => ({
         number: pr.number,
         title: pr.title,
         url: pr.html_url,
         state: pr.state
-      }))
-    };
+      }));
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Found ${simplified.length} PR(s) in ${owner}/${repo} (state=${state})`
+          }
+        ],
+        structuredContent: {
+          pullRequests: simplified
+        }
+      };
+    } catch (error) {
+      console.error("[MCP-SERVER] Error in github.list_pull_requests:", error);
+      throw error;
+    }
   }
 );
+
 
 server.registerTool(
   "github.get_pr_diff",
@@ -105,16 +135,53 @@ server.registerTool(
       diff: z.string()
     })
   },
-  async (input) => {
-    const { owner, repo, number } = input;
-    const response = await callGithub(
-      `https://api.github.com/repos/${owner}/${repo}/pulls/${number}`,
-      { Accept: "application/vnd.github.v3.diff" }
-    );
-    const diff = await response.body.text();
-    return { diff };
+  async (input, { requestId }) => {
+    console.error("[MCP-SERVER] Tool github.get_pr_diff called:", {
+      requestId,
+      args: input
+    });
+
+    try {
+      const { owner, repo, number } = input;
+      const response = await callGithub(
+        `https://api.github.com/repos/${owner}/${repo}/pulls/${number}`,
+        { Accept: "application/vnd.github.v3.diff" }
+      );
+
+      const diff = await response.body.text();
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Unified diff for PR #${number} in ${owner}/${repo} (length ${diff.length} chars)`
+          }
+        ],
+        structuredContent: {
+          diff
+        }
+      };
+    } catch (error) {
+      console.error("[MCP-SERVER] Error in github.get_pr_diff:", error);
+      throw error;
+    }
   }
 );
 
-const transport = new StdioServerTransport();
-server.connect(transport);
+}
+
+async function main() {
+  console.error("[MCP-SERVER] Starting server...");
+  registerTools();
+
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+  console.error(
+    "[MCP-SERVER] Connected to StdioServerTransport, waiting for requests..."
+  );
+}
+
+main().catch((err) => {
+  console.error("[MCP-SERVER] Fatal error in main:", err);
+  process.exit(1);
+});
