@@ -3,7 +3,6 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import fs from "node:fs";
 import path from "node:path";
 import { request } from "undici";
-import { z } from "zod";
 
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 const DEFAULT_OWNER = process.env.GITHUB_DEFAULT_OWNER ?? "aas-aosp-dev";
@@ -24,10 +23,24 @@ function requireToken() {
   }
 }
 
+function safeSerialize(payload: unknown) {
+  try {
+    return JSON.stringify(payload);
+  } catch (error) {
+    return String(payload);
+  }
+}
+
 async function callGithub(url: string, headers: Record<string, string>) {
   requireToken();
 
   try {
+    console.log("[MCP-SERVER] Calling GitHub API:", {
+      url,
+      headers: { Accept: headers.Accept },
+      hasToken: Boolean(GITHUB_TOKEN)
+    });
+
     const response = await request(url, {
       method: "GET",
       headers: {
@@ -39,8 +52,14 @@ async function callGithub(url: string, headers: Record<string, string>) {
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
       const snippet = (await response.body.text()).slice(0, 200);
+      console.log("[MCP-SERVER] GitHub API non-2xx response", {
+        status: response.statusCode,
+        bodySnippet: snippet
+      });
       throw new Error(`GitHub API error: ${response.statusCode} ${snippet}`);
     }
+
+    console.log("[MCP-SERVER] GitHub API response status:", response.statusCode);
 
     return response;
   } catch (error) {
@@ -56,77 +75,102 @@ function registerTools() {
     "[MCP-SERVER] Registering tools: github.list_pull_requests, github.get_pr_diff, fs.save_summary"
   );
 
-  const githubListInputSchema = z
-    .object({
-      owner: z.string().default(DEFAULT_OWNER).optional(),
-      repo: z.string().default(DEFAULT_REPO).optional(),
-      state: z.enum(["open", "closed", "all"]).default("open").optional()
-    })
-    .strict();
+  const githubListInputSchema = {
+    type: "object",
+    properties: {
+      owner: { type: "string", default: DEFAULT_OWNER },
+      repo: { type: "string", default: DEFAULT_REPO },
+      state: {
+        type: "string",
+        enum: ["open", "closed", "all"],
+        default: "open"
+      }
+    },
+    required: [],
+    additionalProperties: false,
+    $schema: "http://json-schema.org/draft-07/schema#"
+  } as const;
 
-  const githubListOutputSchema = z
-    .object({
-      pullRequests: z
-        .array(
-          z
-            .object({
-              number: z.number().int(),
-              title: z.string(),
-              url: z.string().url(),
-              state: z.string()
-            })
-            .strict()
-        )
-        .default([])
-    })
-    .strict();
+  const githubListOutputSchema = {
+    type: "object",
+    properties: {
+      pullRequests: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            number: { type: "integer" },
+            title: { type: "string" },
+            url: { type: "string", format: "uri" },
+            state: { type: "string" }
+          },
+          required: ["number", "title", "url", "state"],
+          additionalProperties: false
+        },
+        default: []
+      }
+    },
+    required: ["pullRequests"],
+    additionalProperties: false,
+    $schema: "http://json-schema.org/draft-07/schema#"
+  } as const;
 
-  const githubGetPrDiffInputSchema = z
-    .object({
-      owner: z.string().default(DEFAULT_OWNER).optional(),
-      repo: z.string().default(DEFAULT_REPO).optional(),
-      number: z.number().int().min(1)
-    })
-    .strict();
+  const githubGetPrDiffInputSchema = {
+    type: "object",
+    properties: {
+      owner: { type: "string", default: DEFAULT_OWNER },
+      repo: { type: "string", default: DEFAULT_REPO },
+      number: { type: "integer", minimum: 1 }
+    },
+    required: ["number"],
+    additionalProperties: false,
+    $schema: "http://json-schema.org/draft-07/schema#"
+  } as const;
 
-  const githubGetPrDiffOutputSchema = z
-    .object({
-      diff: z.string()
-    })
-    .strict();
+  const githubGetPrDiffOutputSchema = {
+    type: "object",
+    properties: {
+      diff: { type: "string" }
+    },
+    required: ["diff"],
+    additionalProperties: false,
+    $schema: "http://json-schema.org/draft-07/schema#"
+  } as const;
 
-  const fsSaveSummaryInputSchema = z
-    .object({
-      fileName: z
-        .string()
-        .describe("File name for the summary, e.g. pr-43-summary.md"),
-      content: z
-        .string()
-        .describe(
-          "Markdown content of the summary. Will be written to the file as-is."
-        )
-    })
-    .strict();
+  const fsSaveSummaryInputSchema = {
+    type: "object",
+    properties: {
+      fileName: {
+        type: "string",
+        description: "File name for the summary, e.g. pr-43-summary.md"
+      },
+      content: {
+        type: "string",
+        description: "Markdown content to write"
+      }
+    },
+    required: ["fileName", "content"],
+    additionalProperties: false,
+    $schema: "http://json-schema.org/draft-07/schema#"
+  } as const;
 
-  const fsSaveSummaryOutputSchema = z
-    .object({
-      filePath: z.string().describe("Absolute path to the written file")
-    })
-    .strict();
+  const fsSaveSummaryOutputSchema = {
+    type: "object",
+    properties: {
+      filePath: {
+        type: "string",
+        description: "Absolute path to the written file"
+      }
+    },
+    required: ["filePath"],
+    additionalProperties: false,
+    $schema: "http://json-schema.org/draft-07/schema#"
+  } as const;
 
-  console.error("[MCP-SERVER] About to register tool schemas via Zod");
-  console.error(
-    "[MCP-SERVER] github.list_pull_requests schema type:",
-    githubListInputSchema._def.typeName
-  );
-  console.error(
-    "[MCP-SERVER] github.get_pr_diff schema type:",
-    githubGetPrDiffInputSchema._def.typeName
-  );
-  console.error(
-    "[MCP-SERVER] fs.save_summary schema type:",
-    fsSaveSummaryInputSchema._def.typeName
-  );
+  console.error("[MCP-SERVER] About to register tool schemas via JSON Schema");
+  console.error("[MCP-SERVER] github.list_pull_requests inputSchema.type:", githubListInputSchema.type);
+  console.error("[MCP-SERVER] github.get_pr_diff inputSchema.type:", githubGetPrDiffInputSchema.type);
+  console.error("[MCP-SERVER] fs.save_summary inputSchema.type:", fsSaveSummaryInputSchema.type);
 
   server.registerTool(
     "github.list_pull_requests",
@@ -142,13 +186,28 @@ function registerTools() {
       });
 
       try {
-        const { owner, repo, state } = input;
+        const owner = input.owner ?? DEFAULT_OWNER;
+        const repo = input.repo ?? DEFAULT_REPO;
+        const state = input.state ?? "open";
+        console.log("[MCP-SERVER] github.list_pull_requests GitHub call", {
+          owner,
+          repo,
+          state,
+          hasToken: Boolean(GITHUB_TOKEN)
+        });
         const response = await callGithub(
           `https://api.github.com/repos/${owner}/${repo}/pulls?state=${state}`,
           { Accept: "application/vnd.github+json" }
         );
 
-        const data = (await response.body.json()) as Array<{
+        const rawBody = await response.body.text();
+        console.log("[MCP-SERVER] github.list_pull_requests GitHub response", {
+          requestId,
+          status: response.statusCode,
+          bodySnippet: rawBody.slice(0, 500)
+        });
+
+        const data = JSON.parse(rawBody) as Array<{
           number: number;
           title: string;
           html_url: string;
@@ -178,7 +237,19 @@ function registerTools() {
           "[MCP-SERVER] Error in github.list_pull_requests:",
           error
         );
-        throw error;
+        const message =
+          error instanceof Error
+            ? error.message
+            : "Unknown error while listing pull requests";
+        return {
+          content: [
+            {
+              type: "text",
+              text: `GitHub API error while listing PRs for ${owner}/${repo}: ${message}`
+            }
+          ],
+          isError: true
+        };
       }
     }
   );
@@ -227,7 +298,19 @@ function registerTools() {
         };
       } catch (error) {
         console.error("[MCP-SERVER] Error in fs.save_summary:", error);
-        throw error;
+        const message =
+          error instanceof Error
+            ? error.message
+            : "Unknown error while saving summary";
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Failed to save summary: ${message}`
+            }
+          ],
+          isError: true
+        };
       }
     }
   );
@@ -246,13 +329,26 @@ function registerTools() {
       });
 
       try {
-        const { owner, repo, number } = input;
+        const owner = input.owner ?? DEFAULT_OWNER;
+        const repo = input.repo ?? DEFAULT_REPO;
+        const number = input.number;
+        console.log("[MCP-SERVER] github.get_pr_diff GitHub call", {
+          owner,
+          repo,
+          number,
+          hasToken: Boolean(GITHUB_TOKEN)
+        });
         const response = await callGithub(
           `https://api.github.com/repos/${owner}/${repo}/pulls/${number}`,
           { Accept: "application/vnd.github.v3.diff" }
         );
 
         const diff = await response.body.text();
+        console.log("[MCP-SERVER] github.get_pr_diff GitHub response", {
+          requestId,
+          status: response.statusCode,
+          bodySnippet: diff.slice(0, 500)
+        });
 
         return {
           content: [
@@ -267,7 +363,19 @@ function registerTools() {
         };
       } catch (error) {
         console.error("[MCP-SERVER] Error in github.get_pr_diff:", error);
-        throw error;
+        const message =
+          error instanceof Error
+            ? error.message
+            : "Unknown error while fetching PR diff";
+        return {
+          content: [
+            {
+              type: "text",
+              text: `GitHub API error while fetching diff for PR #${number} in ${owner}/${repo}: ${message}`
+            }
+          ],
+          isError: true
+        };
       }
     }
   );
@@ -295,14 +403,20 @@ async function main() {
   const existingOnMessage = transport.onmessage;
   if (existingOnMessage) {
     transport.onmessage = (message) => {
-      console.error("[MCP-SERVER] Received JSON-RPC message:", message);
+      console.log(
+        "[MCP-SERVER] Received JSON-RPC message:",
+        safeSerialize(message)
+      );
       return existingOnMessage(message);
     };
   }
 
   const originalSend = transport.send.bind(transport);
   transport.send = async (message: unknown) => {
-    console.error("[MCP-SERVER] Sending JSON-RPC message:", message);
+    console.log(
+      "[MCP-SERVER] Sending JSON-RPC message:",
+      safeSerialize(message)
+    );
     return originalSend(message);
   };
 }
