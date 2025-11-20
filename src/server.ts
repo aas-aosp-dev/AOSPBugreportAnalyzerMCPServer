@@ -1,8 +1,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { request } from "undici";
 import fs from "node:fs";
 import path from "node:path";
+import { request } from "undici";
+import { z } from "zod";
 
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 const DEFAULT_OWNER = process.env.GITHUB_DEFAULT_OWNER ?? "aas-aosp-dev";
@@ -55,109 +56,76 @@ function registerTools() {
     "[MCP-SERVER] Registering tools: github.list_pull_requests, github.get_pr_diff, fs.save_summary"
   );
 
-  const githubListInputSchema = {
-    type: "object",
-    properties: {
-      owner: { type: "string", default: DEFAULT_OWNER },
-      repo: { type: "string", default: DEFAULT_REPO },
-      state: {
-        type: "string",
-        enum: ["open", "closed", "all"],
-        default: "open"
-      }
-    },
-    required: [],
-    additionalProperties: false,
-    $schema: "http://json-schema.org/draft-07/schema#"
-  } as const;
+  const githubListInputSchema = z
+    .object({
+      owner: z.string().default(DEFAULT_OWNER).optional(),
+      repo: z.string().default(DEFAULT_REPO).optional(),
+      state: z.enum(["open", "closed", "all"]).default("open").optional()
+    })
+    .strict();
 
-  const githubListOutputSchema = {
-    type: "object",
-    properties: {
-      pullRequests: {
-        type: "array",
-        items: {
-          type: "object",
-          properties: {
-            number: { type: "number" },
-            title: { type: "string" },
-            url: { type: "string" },
-            state: { type: "string" }
-          },
-          required: ["number", "title", "url", "state"],
-          additionalProperties: false
-        }
-      }
-    },
-    required: ["pullRequests"],
-    additionalProperties: false,
-    $schema: "http://json-schema.org/draft-07/schema#"
-  } as const;
+  const githubListOutputSchema = z
+    .object({
+      pullRequests: z
+        .array(
+          z
+            .object({
+              number: z.number().int(),
+              title: z.string(),
+              url: z.string().url(),
+              state: z.string()
+            })
+            .strict()
+        )
+        .default([])
+    })
+    .strict();
 
-  const githubGetPrDiffInputSchema = {
-    type: "object",
-    properties: {
-      owner: { type: "string", default: DEFAULT_OWNER },
-      repo: { type: "string", default: DEFAULT_REPO },
-      number: { type: "integer", minimum: 1 }
-    },
-    required: ["number"],
-    additionalProperties: false,
-    $schema: "http://json-schema.org/draft-07/schema#"
-  } as const;
+  const githubGetPrDiffInputSchema = z
+    .object({
+      owner: z.string().default(DEFAULT_OWNER).optional(),
+      repo: z.string().default(DEFAULT_REPO).optional(),
+      number: z.number().int().min(1)
+    })
+    .strict();
 
-  const githubGetPrDiffOutputSchema = {
-    type: "object",
-    properties: {
-      diff: { type: "string" }
-    },
-    required: ["diff"],
-    additionalProperties: false,
-    $schema: "http://json-schema.org/draft-07/schema#"
-  } as const;
+  const githubGetPrDiffOutputSchema = z
+    .object({
+      diff: z.string()
+    })
+    .strict();
 
-  const fsSaveSummaryInputSchema = {
-    type: "object",
-    properties: {
-      fileName: {
-        type: "string",
-        description: "File name for the summary, e.g. pr-43-summary.md"
-      },
-      content: {
-        type: "string",
-        description: "Markdown content to write"
-      }
-    },
-    required: ["fileName", "content"],
-    additionalProperties: false,
-    $schema: "http://json-schema.org/draft-07/schema#"
-  } as const;
+  const fsSaveSummaryInputSchema = z
+    .object({
+      fileName: z
+        .string()
+        .describe("File name for the summary, e.g. pr-43-summary.md"),
+      content: z
+        .string()
+        .describe(
+          "Markdown content of the summary. Will be written to the file as-is."
+        )
+    })
+    .strict();
 
-  const fsSaveSummaryOutputSchema = {
-    type: "object",
-    properties: {
-      filePath: {
-        type: "string",
-        description: "Absolute path to the written file"
-      }
-    },
-    required: ["filePath"],
-    additionalProperties: false,
-    $schema: "http://json-schema.org/draft-07/schema#"
-  } as const;
+  const fsSaveSummaryOutputSchema = z
+    .object({
+      filePath: z.string().describe("Absolute path to the written file")
+    })
+    .strict();
 
-  console.error("[MCP-SERVER] About to register tools schemas");
+  console.error("[MCP-SERVER] About to register tool schemas via Zod");
   console.error(
-    "[MCP-SERVER] github.list_pull_requests inputSchema.type:",
-    githubListInputSchema.type
+    "[MCP-SERVER] github.list_pull_requests schema type:",
+    githubListInputSchema._def.typeName
   );
   console.error(
-    "[MCP-SERVER] github.get_pr_diff inputSchema.type:",
-    githubGetPrDiffInputSchema.type
+    "[MCP-SERVER] github.get_pr_diff schema type:",
+    githubGetPrDiffInputSchema._def.typeName
   );
   console.error(
-    "[MCP-SERVER] fs.save_summary inputSchema.type:",
-    fsSaveSummaryInputSchema.type
+    "[MCP-SERVER] fs.save_summary schema type:",
+    fsSaveSummaryInputSchema._def.typeName
   );
 
   server.registerTool(
@@ -206,7 +174,10 @@ function registerTools() {
           }
         };
       } catch (error) {
-        console.error("[MCP-SERVER] Error in github.list_pull_requests:", error);
+        console.error(
+          "[MCP-SERVER] Error in github.list_pull_requests:",
+          error
+        );
         throw error;
       }
     }
@@ -220,13 +191,16 @@ function registerTools() {
       outputSchema: fsSaveSummaryOutputSchema
     },
     async (args, { requestId }) => {
-      console.log("[MCP-SERVER] Tool fs.save_summary called:", {
-        fileName: (args as { fileName: string }).fileName,
-        requestId
+      console.error("[MCP-SERVER] Tool fs.save_summary called:", {
+        requestId,
+        args
       });
 
       try {
-        const { fileName, content } = args as { fileName: string; content: string };
+        const { fileName, content } = args as {
+          fileName: string;
+          content: string;
+        };
         const summariesDir = path.join(process.cwd(), "summaries");
         await fs.promises.mkdir(summariesDir, { recursive: true });
 
@@ -238,7 +212,7 @@ function registerTools() {
 
         await fs.promises.writeFile(fullPath, content, "utf-8");
 
-        console.log("[MCP-SERVER] Saved summary to:", fullPath);
+        console.error("[MCP-SERVER] Saved summary to:", fullPath);
 
         return {
           content: [
@@ -304,13 +278,44 @@ async function main() {
   registerTools();
 
   const transport = new StdioServerTransport();
-  await server.connect(transport);
-  console.error(
-    "[MCP-SERVER] Connected to StdioServerTransport, waiting for requests..."
-  );
+  transport.onerror = (error) => {
+    console.error("[MCP-SERVER] Transport error:", error);
+  };
+
+  try {
+    await server.connect(transport);
+    console.error(
+      "[MCP-SERVER] Connected to StdioServerTransport, waiting for requests..."
+    );
+  } catch (err) {
+    console.error("[MCP-SERVER] Error while connecting transport:", err);
+    throw err;
+  }
+
+  const existingOnMessage = transport.onmessage;
+  if (existingOnMessage) {
+    transport.onmessage = (message) => {
+      console.error("[MCP-SERVER] Received JSON-RPC message:", message);
+      return existingOnMessage(message);
+    };
+  }
+
+  const originalSend = transport.send.bind(transport);
+  transport.send = async (message: unknown) => {
+    console.error("[MCP-SERVER] Sending JSON-RPC message:", message);
+    return originalSend(message);
+  };
 }
 
 main().catch((err) => {
   console.error("[MCP-SERVER] Fatal error in main:", err);
   process.exit(1);
+});
+
+process.on("uncaughtException", (err) => {
+  console.error("[MCP-SERVER] Uncaught exception:", err);
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.error("[MCP-SERVER] Unhandled rejection:", reason);
 });
