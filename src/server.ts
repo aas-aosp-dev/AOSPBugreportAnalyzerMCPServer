@@ -12,11 +12,23 @@ const USER_AGENT = "AOSPBugreportAnalyzerMCPServer";
 
 const server = new McpServer({
   name: "aospbugreportanalyzer-mcp",
-  version: "0.1.0",
-  description: "MCP server that exposes minimal GitHub tools for AOSPBugreportAnalyzer"
+  version: "0.1.0"
 });
 
+const saveSummaryArgsSchema = z.object({
+  fileName: z
+    .string()
+    .describe("File name for the summary, e.g. pr-43-summary.md"),
+  content: z
+    .string()
+    .describe("Markdown content of the summary. Will be written to the file as-is.")
+});
 
+const saveSummaryResultSchema = z.object({
+  filePath: z
+    .string()
+    .describe("Absolute path to the written file")
+});
 
 function requireToken() {
   if (!GITHUB_TOKEN) {
@@ -168,82 +180,62 @@ function registerTools() {
       }
     }
   );
+server.registerTool(
+  "fs.save_summary",
+  {
+    description: "Save summary content into a Markdown file and return the path",
+    inputSchema: saveSummaryArgsSchema,
+    outputSchema: saveSummaryResultSchema
+  },
+  async (args: z.infer<typeof saveSummaryArgsSchema>, { requestId }) => {
+    const { fileName, content } = args;
 
-  server.registerTool(
-    "fs.save_summary",
-    {
-      description: "Save summary content into a Markdown file and return the path",
-      inputSchema: {
-        type: "object",
-        properties: {
-          fileName: {
-            type: "string",
-            description: "File name for the summary, e.g. pr-43-summary.md"
-          },
-          content: {
-            type: "string",
-            description:
-              "Markdown content of the summary. Will be written to the file as-is."
+    const safeFileName =
+      fileName.trim().replace(/[\/\\]/g, "_") || "summary.md";
+
+    console.error("[MCP-SERVER] Tool fs.save_summary called:", {
+      requestId,
+      fileName: safeFileName
+    });
+
+    try {
+      const summariesDir = path.join(process.cwd(), "summaries");
+      await fs.promises.mkdir(summariesDir, { recursive: true });
+
+      const fullPath = path.join(summariesDir, safeFileName);
+      await fs.promises.writeFile(fullPath, content, "utf8");
+
+      console.error("[MCP-SERVER] Saved summary to:", fullPath);
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Summary saved to ${fullPath}`
           }
-        },
-        required: ["fileName", "content"],
-        additionalProperties: false,
-        $schema: "http://json-schema.org/draft-07/schema#"
-      },
-      outputSchema: {
-        type: "object",
-        properties: {
-          filePath: {
-            type: "string",
-            description: "Absolute path to the written file"
+        ],
+        structuredContent: {
+          filePath: fullPath
+        }
+      };
+    } catch (error: any) {
+      console.error("[MCP-SERVER] Error in fs.save_summary:", error);
+
+      return {
+        isError: true,
+        content: [
+          {
+            type: "text",
+            text: `Failed to save summary: ${
+              error?.message ?? String(error)
+            }`
           }
-        },
-        required: ["filePath"],
-        additionalProperties: false,
-        $schema: "http://json-schema.org/draft-07/schema#"
-      }
-    },
-    async (args) => {
-      const { fileName, content } = args as { fileName: string; content: string };
-
-      const safeFileName = fileName.trim().replace(/[\/\\]/g, "_") || "summary.md";
-
-      console.error("[MCP-SERVER] Tool fs.save_summary called:", { fileName: safeFileName });
-
-      try {
-        const summariesDir = path.join(process.cwd(), "summaries");
-        await fs.promises.mkdir(summariesDir, { recursive: true });
-        const fullPath = path.join(summariesDir, safeFileName);
-
-        await fs.promises.writeFile(fullPath, content, "utf8");
-
-        console.error("[MCP-SERVER] Saved summary to:", fullPath);
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Summary saved to ${fullPath}`
-            }
-          ],
-          structuredContent: {
-            filePath: fullPath
-          }
-        };
-      } catch (err) {
-        console.error("[MCP-SERVER] Error in fs.save_summary:", err);
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Failed to save summary: ${String(err)}`
-            }
-          ],
-          isError: true
-        };
-      }
+        ]
+      };
     }
-  );
+  }
+);
+
 
 }
 
