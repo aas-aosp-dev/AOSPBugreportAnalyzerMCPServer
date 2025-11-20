@@ -12,11 +12,8 @@ const USER_AGENT = "AOSPBugreportAnalyzerMCPServer";
 
 const server = new McpServer({
   name: "aospbugreportanalyzer-mcp",
-  version: "0.1.0",
-  description: "MCP server that exposes minimal GitHub tools for AOSPBugreportAnalyzer"
+  version: "0.1.0"
 });
-
-
 
 function requireToken() {
   if (!GITHUB_TOKEN) {
@@ -189,7 +186,7 @@ function registerTools() {
         required: ["fileName", "content"],
         additionalProperties: false,
         $schema: "http://json-schema.org/draft-07/schema#"
-      },
+      } as unknown as z.ZodTypeAny,
       outputSchema: {
         type: "object",
         properties: {
@@ -201,10 +198,10 @@ function registerTools() {
         required: ["filePath"],
         additionalProperties: false,
         $schema: "http://json-schema.org/draft-07/schema#"
-      }
+      } as unknown as z.ZodTypeAny
     },
-    async (args) => {
-      const { fileName, content } = args as { fileName: string; content: string };
+    async (args: { fileName: string; content: string }) => {
+      const { fileName, content } = args;
 
       const safeFileName = fileName.trim().replace(/[\/\\]/g, "_") || "summary.md";
 
