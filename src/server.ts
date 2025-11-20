@@ -1,6 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { z } from "zod";
 import { request } from "undici";
 import fs from "node:fs";
 import path from "node:path";
@@ -56,25 +55,117 @@ function registerTools() {
     "[MCP-SERVER] Registering tools: github.list_pull_requests, github.get_pr_diff, fs.save_summary"
   );
 
+  const githubListInputSchema = {
+    type: "object",
+    properties: {
+      owner: { type: "string", default: DEFAULT_OWNER },
+      repo: { type: "string", default: DEFAULT_REPO },
+      state: {
+        type: "string",
+        enum: ["open", "closed", "all"],
+        default: "open"
+      }
+    },
+    required: [],
+    additionalProperties: false,
+    $schema: "http://json-schema.org/draft-07/schema#"
+  } as const;
+
+  const githubListOutputSchema = {
+    type: "object",
+    properties: {
+      pullRequests: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            number: { type: "number" },
+            title: { type: "string" },
+            url: { type: "string" },
+            state: { type: "string" }
+          },
+          required: ["number", "title", "url", "state"],
+          additionalProperties: false
+        }
+      }
+    },
+    required: ["pullRequests"],
+    additionalProperties: false,
+    $schema: "http://json-schema.org/draft-07/schema#"
+  } as const;
+
+  const githubGetPrDiffInputSchema = {
+    type: "object",
+    properties: {
+      owner: { type: "string", default: DEFAULT_OWNER },
+      repo: { type: "string", default: DEFAULT_REPO },
+      number: { type: "integer", minimum: 1 }
+    },
+    required: ["number"],
+    additionalProperties: false,
+    $schema: "http://json-schema.org/draft-07/schema#"
+  } as const;
+
+  const githubGetPrDiffOutputSchema = {
+    type: "object",
+    properties: {
+      diff: { type: "string" }
+    },
+    required: ["diff"],
+    additionalProperties: false,
+    $schema: "http://json-schema.org/draft-07/schema#"
+  } as const;
+
+  const fsSaveSummaryInputSchema = {
+    type: "object",
+    properties: {
+      fileName: {
+        type: "string",
+        description: "File name for the summary, e.g. pr-43-summary.md"
+      },
+      content: {
+        type: "string",
+        description: "Markdown content to write"
+      }
+    },
+    required: ["fileName", "content"],
+    additionalProperties: false,
+    $schema: "http://json-schema.org/draft-07/schema#"
+  } as const;
+
+  const fsSaveSummaryOutputSchema = {
+    type: "object",
+    properties: {
+      filePath: {
+        type: "string",
+        description: "Absolute path to the written file"
+      }
+    },
+    required: ["filePath"],
+    additionalProperties: false,
+    $schema: "http://json-schema.org/draft-07/schema#"
+  } as const;
+
+  console.error("[MCP-SERVER] About to register tools schemas");
+  console.error(
+    "[MCP-SERVER] github.list_pull_requests inputSchema.type:",
+    githubListInputSchema.type
+  );
+  console.error(
+    "[MCP-SERVER] github.get_pr_diff inputSchema.type:",
+    githubGetPrDiffInputSchema.type
+  );
+  console.error(
+    "[MCP-SERVER] fs.save_summary inputSchema.type:",
+    fsSaveSummaryInputSchema.type
+  );
+
   server.registerTool(
     "github.list_pull_requests",
     {
       description: "List pull requests for a GitHub repository",
-      inputSchema: z.object({
-        owner: z.string().default(DEFAULT_OWNER),
-        repo: z.string().default(DEFAULT_REPO),
-        state: z.enum(["open", "closed", "all"]).default("open")
-      }),
-      outputSchema: z.object({
-        pullRequests: z.array(
-          z.object({
-            number: z.number(),
-            title: z.string(),
-            url: z.string(),
-            state: z.string()
-          })
-        )
-      })
+      inputSchema: githubListInputSchema,
+      outputSchema: githubListOutputSchema
     },
     async (input, { requestId }) => {
       console.error("[MCP-SERVER] Tool github.list_pull_requests called:", {
@@ -125,34 +216,8 @@ function registerTools() {
     "fs.save_summary",
     {
       description: "Save summary content into a Markdown file and return the path",
-      inputSchema: {
-        type: "object",
-        properties: {
-          fileName: {
-            type: "string",
-            description: "File name for the summary, e.g. pr-43-summary.md"
-          },
-          content: {
-            type: "string",
-            description: "Markdown content to write"
-          }
-        },
-        required: ["fileName", "content"],
-        additionalProperties: false,
-        $schema: "http://json-schema.org/draft-07/schema#"
-      },
-      outputSchema: {
-        type: "object",
-        properties: {
-          filePath: {
-            type: "string",
-            description: "Absolute path to the written file"
-          }
-        },
-        required: ["filePath"],
-        additionalProperties: false,
-        $schema: "http://json-schema.org/draft-07/schema#"
-      }
+      inputSchema: fsSaveSummaryInputSchema,
+      outputSchema: fsSaveSummaryOutputSchema
     },
     async (args, { requestId }) => {
       console.log("[MCP-SERVER] Tool fs.save_summary called:", {
@@ -197,14 +262,8 @@ function registerTools() {
     "github.get_pr_diff",
     {
       description: "Get unified diff for a specific GitHub pull request",
-      inputSchema: z.object({
-        owner: z.string().default(DEFAULT_OWNER),
-        repo: z.string().default(DEFAULT_REPO),
-        number: z.number().int().positive()
-      }),
-      outputSchema: z.object({
-        diff: z.string()
-      })
+      inputSchema: githubGetPrDiffInputSchema,
+      outputSchema: githubGetPrDiffOutputSchema
     },
     async (input, { requestId }) => {
       console.error("[MCP-SERVER] Tool github.get_pr_diff called:", {
