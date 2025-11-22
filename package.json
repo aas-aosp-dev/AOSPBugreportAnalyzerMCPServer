@@ -5,6 +5,8 @@
   "main": "dist/server.js",
   "scripts": {
     "dev": "tsx src/server.ts",
+    "dev:github": "tsx src/server.ts",
+    "dev:adb": "tsx src/adbServer.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js"
   },
