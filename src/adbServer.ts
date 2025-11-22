@@ -24,69 +24,46 @@ const server = new McpServer({
   version: "0.1.0"
 });
 
-const listDevicesInputSchema = {
-  type: "object",
-  properties: {},
-  additionalProperties: false,
-  $schema: "http://json-schema.org/draft-07/schema#"
-} as const;
+const listDevicesInputSchema = z.object({}).strict();
 
-const listDevicesOutputSchema = {
-  type: "object",
-  properties: {
-    devices: {
-      type: "array",
-      items: {
-        type: "object",
-        properties: {
-          serial: { type: "string" },
-          state: { type: "string" },
-          model: { type: "string" },
-          device: { type: "string" }
-        },
-        required: ["serial", "state"],
-        additionalProperties: false
-      }
-    }
-  },
-  required: ["devices"],
-  additionalProperties: false,
-  $schema: "http://json-schema.org/draft-07/schema#"
-} as const;
+const listDevicesOutputSchema = z
+  .object({
+    devices: z.array(
+      z
+        .object({
+          serial: z.string(),
+          state: z.string(),
+          model: z.string(),
+          device: z.string()
+        })
+        .strict()
+    )
+  })
+  .strict();
 
-const getBugreportInputSchema = {
-  type: "object",
-  properties: {
-    serial: {
-      type: "string",
-      description: "adb serial of the device (from adb devices)"
-    }
-  },
-  required: ["serial"],
-  additionalProperties: false,
-  $schema: "http://json-schema.org/draft-07/schema#"
-} as const;
+const getBugreportInputSchema = z
+  .object({
+    serial: z
+      .string()
+      .describe("adb serial of the device (from adb devices)")
+  })
+  .strict();
 
-const getBugreportOutputSchema = {
-  type: "object",
-  properties: {
-    filePath: {
-      type: "string",
-      description: "Absolute path to the saved bugreport file"
-    }
-  },
-  required: ["filePath"],
-  additionalProperties: false,
-  $schema: "http://json-schema.org/draft-07/schema#"
-} as const;
+const getBugreportOutputSchema = z
+  .object({
+    filePath: z
+      .string()
+      .describe("Absolute path to the saved bugreport file")
+  })
+  .strict();
 
 function registerTools() {
   server.registerTool(
     "adb.list_devices",
     {
       description: "List adb devices with serial, state, model and device name",
-      inputSchema: listDevicesInputSchema as unknown as z.ZodType<object>,
-      outputSchema: listDevicesOutputSchema as unknown as z.ZodType<object>
+      inputSchema: listDevicesInputSchema,
+      outputSchema: listDevicesOutputSchema
     },
     async (
       args: unknown,
@@ -191,8 +168,8 @@ function registerTools() {
     "adb.get_bugreport",
     {
       description: "Capture a bugreport from the specified adb device",
-      inputSchema: getBugreportInputSchema as unknown as z.ZodType<object>,
-      outputSchema: getBugreportOutputSchema as unknown as z.ZodType<object>
+      inputSchema: getBugreportInputSchema,
+      outputSchema: getBugreportOutputSchema
     },
     async (
       args: unknown,
